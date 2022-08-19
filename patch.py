@@ -39,14 +39,14 @@ def get_ff_layer(
     """
     Gets the feedforward layer of a model within the transformer block
     `model`: torch.nn.Module
-      a torch.nn.Module
+      	a torch.nn.Module
     `layer_idx`: int
-      which transformer layer to access
+      	which transformer layer to access
     `transformer_layers_attr`: str
-      chain of attributes (separated by periods) that access the transformer layers within `model`.
-      The transformer layers are expected to be indexable - i.e a Modulelist
+        chain of attributes (separated by periods) that access the transformer layers within `model`.
+        The transformer layers are expected to be indexable - i.e a Modulelist
     `ff_attrs`: str
-      chain of attributes (separated by periods) that access the ff block within a transformer layer
+      	chain of attributes (separated by periods) that access the ff block within a transformer layer
     """
     transformer_layers = get_attributes(model, transformer_layers_attr)
     assert layer_idx < len(
@@ -71,16 +71,16 @@ def register_hook(
     and how to access the ff layer with ff_attrs
 
     `model`: torch.nn.Module
-      a torch.nn.Module
+      	a torch.nn.Module
     `layer_idx`: int
-      which transformer layer to access
+      	which transformer layer to access
     `f`: Callable
-      a callable function that takes in the intermediate activations
+      	a callable function that takes in the intermediate activations
     `transformer_layers_attr`: str
-      chain of attributes (separated by periods) that access the transformer layers within `model`.
-      The transformer layers are expected to be indexable - i.e a Modulelist
+        chain of attributes (separated by periods) that access the transformer layers within `model`.
+        The transformer layers are expected to be indexable - i.e a Modulelist
     `ff_attrs`: str
-      chain of attributes (separated by periods) that access the ff block within a transformer layer
+      	chain of attributes (separated by periods) that access the ff block within a transformer layer
     """
     ff_layer = get_ff_layer(
         model,
@@ -97,41 +97,30 @@ def register_hook(
 
 class Patch(torch.nn.Module):
     """
-    Patches a torch module to replace/suppress/enhance the intermediate activations
+    Patches a torch module to replace the intermediate activations
     """
 
     def __init__(
         self,
         ff_layer: nn.Module,
-        mask_idx: int,
+        mask_idxs: List[int],
         replacement_activations: torch.Tensor = None,
-        target_positions: List[List[int]] = None,
         mode: str = "replace",
-        enhance_value: float = 2.0,
     ):
         super().__init__()
         self.ff = ff_layer
         self.acts = replacement_activations
-        self.mask_idx = mask_idx
-        self.target_positions = target_positions
-        self.enhance_value = enhance_value
-        assert mode in ["replace", "suppress", "enhance"]
+        self.mask_idxs = mask_idxs
+        # TODO: support enhance/suppress intermediate activations to update/erase knowledge
+        assert mode == "replace"
         self.mode = mode
         if self.mode == "replace":
             assert self.acts is not None
-        elif self.mode in ["enhance", "suppress"]:
-            assert self.target_positions is not None
 
     def forward(self, x: torch.Tensor):
         x = self.ff(x)
         if self.mode == "replace":
-            x[:, self.mask_idx, :] = self.acts
-        elif self.mode == "suppress":
-            for pos in self.target_positions:
-                x[:, self.mask_idx, pos] = 0.0
-        elif self.mode == "enhance":
-            for pos in self.target_positions:
-                x[:, self.mask_idx, pos] *= self.enhance_value
+            x[:, self.mask_idxs, :] = self.acts
         else:
             raise NotImplementedError
         return x
@@ -139,32 +128,30 @@ class Patch(torch.nn.Module):
 
 def patch_ff_layer(
     model: nn.Module,
-    mask_idx: int,
+    mask_idxs: List[int],
     layer_idx: int = None,
     replacement_activations: torch.Tensor = None,
     mode: str = "replace",
     transformer_layers_attr: str = "bert.encoder.layer",
     ff_attrs: str = "intermediate",
-    neurons: List[List[int]] = None,
 ):
     """
     replaces the ff layer at `layer_idx` with a `Patch` class - that will replace the intermediate activations at sequence position
     `mask_index` with `replacement_activations`
 
     `model`: nn.Module
-      a torch.nn.Module [currently only works with HF Bert models]
+    	  a torch.nn.Module [currently only works with HF Bert models]
     `layer_idx`: int
-      which transformer layer to access
-    `mask_idx`: int
-      the index (along the sequence length) of the activation to replace.
-      TODO: multiple indices
+    	  which transformer layer to access
+    `mask_idxs`: List[int]
+    	  the indexes (along the sequence length) of the activation to replace.
     `replacement_activations`: torch.Tensor
-      activations [taken from the mask_idx position of the unmodified activations] of shape [b, d]
+    	  activations [taken from the mask_idx position of the unmodified activations] of shape [b, d]
     `transformer_layers_attr`: str
-      chain of attributes (separated by periods) that access the transformer layers within `model`.
-      The transformer layers are expected to be indexable - i.e a Modulelist
+    	  chain of attributes (separated by periods) that access the transformer layers within `model`.
+      	The transformer layers are expected to be indexable - i.e a Modulelist
     `ff_attrs`: str
-      chain of attributes (separated by periods) that access the ff block within a transformer layer
+      	chain of attributes (separated by periods) that access the ff block within a transformer layer
     """
     transformer_layers = get_attributes(model, transformer_layers_attr)
 
@@ -173,37 +160,16 @@ def patch_ff_layer(
         assert layer_idx < len(
             transformer_layers
         ), f"cannot get layer {layer_idx + 1} of a {len(transformer_layers)} layer model"
-
         set_attribute_recursive(
             transformer_layers[layer_idx],
             ff_attrs,
             Patch(
                 ff_layer,
-                mask_idx,
+                mask_idxs,
                 replacement_activations=replacement_activations,
                 mode=mode,
             ),
         )
-
-    elif mode in ["suppress", "enhance"]:
-        neurons_dict = collections.defaultdict(list)
-        for neuron in neurons:
-            layer_idx, pos = neuron
-            neurons_dict[layer_idx].append(pos)
-        for layer_idx, positions in neurons_dict.items():
-            assert layer_idx < len(transformer_layers)
-            ff_layer = get_attributes(transformer_layers[layer_idx], ff_attrs)
-            set_attribute_recursive(
-                transformer_layers[layer_idx],
-                ff_attrs,
-                Patch(
-                    ff_layer,
-                    mask_idx,
-                    replacement_activations=None,
-                    mode=mode,
-                    target_positions=positions,
-                ),
-            )
     else:
         raise NotImplementedError
 
@@ -218,14 +184,14 @@ def unpatch_ff_layer(
     Removes the `Patch` applied by `patch_ff_layer`, replacing it with its original value.
 
     `model`: torch.nn.Module
-      a torch.nn.Module [currently only works with HF Bert models]
+      	a torch.nn.Module [currently only works with HF Bert models]
     `layer_idx`: int
-      which transformer layer to access
+     	  which transformer layer to access
     `transformer_layers_attr`: str
-      chain of attributes (separated by periods) that access the transformer layers within `model`.
-      The transformer layers are expected to be indexable - i.e a Modulelist
+        chain of attributes (separated by periods) that access the transformer layers within `model`.
+        The transformer layers are expected to be indexable - i.e a Modulelist
     `ff_attrs`: str
-      chain of attributes (separated by periods) that access the ff block within a transformer layer
+      	chain of attributes (separated by periods) that access the ff block within a transformer layer
     """
     transformer_layers = get_attributes(model, transformer_layers_attr)
     assert layer_idx < len(

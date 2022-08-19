@@ -5,6 +5,7 @@ import collections
 from tqdm import tqdm
 from pathlib import Path
 import os
+from transformers import PreTrainedTokenizerBase, AutoTokenizer
 from constants import LANGUAGES, PARAREL_RELATION_NAMES
 
 
@@ -50,10 +51,13 @@ def mpararel(data_path: str = "datasets/mpararel.json"):
         return mPARAREL
 
 
-def mpararel_expanded(data_path: str = "datasets/mpararel_expanded.json"):
+def mpararel_expanded(
+    tokenizer: PreTrainedTokenizerBase = None,
+    data_path: str = "datasets/mpararel_expanded.json",
+):
     parent_dir = Path(data_path).parent
     os.makedirs(parent_dir, exist_ok=True)
-    if os.path.exists(data_path):
+    if os.path.exists(data_path) and tokenizer is None:
         with open(data_path, "r") as f:
             return json.load(f)
     else:
@@ -70,9 +74,11 @@ def mpararel_expanded(data_path: str = "datasets/mpararel_expanded.json"):
                 for vocab in value["vocab"]:
                     full_sentences = []
                     for pattern in value["patterns"]:
+                        mask_token_count = len(tokenizer.tokenize(vocab["obj_label"]))
                         full_sentences.append(
                             pattern.replace("[X]", vocab["sub_label"]).replace(
-                                "[Y]", "[MASK]"
+                                "[Y]",
+                                " ".join([tokenizer.mask_token] * mask_token_count),
                             )
                         )
                     mPARAREL_EXPANDED[lang][rel].append(
@@ -89,4 +95,5 @@ def mpararel_expanded(data_path: str = "datasets/mpararel_expanded.json"):
 
 
 if __name__ == "__main__":
-    mpararel_expanded()
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-multilingual-cased")
+    data = mpararel_expanded(tokenizer)

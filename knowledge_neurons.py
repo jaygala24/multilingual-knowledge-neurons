@@ -5,20 +5,19 @@ import einops
 from tqdm import tqdm
 import numpy as np
 import collections
-from typing import List, Optional, Tuple, Callable
+from typing import List, Optional
 import torch
 import torch.nn.functional as F
 import einops
 import collections
 import math
-from functools import partial
 from transformers import (
     PreTrainedTokenizerBase,
     AutoTokenizer,
     AutoModelForMaskedLM,
-    AutoModelForCausalLM
+    AutoModelForCausalLM,
 )
-from constants import ALL_MODELS, BERT_MODELS, GPT2_MODELS, GPT_NEO_MODELS, ROBERTA_MODELS
+from constants import ALL_MODELS, BERT_MODELS, ROBERTA_MODELS
 from patch import *
 
 
@@ -26,9 +25,9 @@ def initialize_model_and_tokenizer(model_name: str):
     if model_name in BERT_MODELS + ROBERTA_MODELS:
         tokenizer = AutoTokenizer.from_pretrained(model_name)
         model = AutoModelForMaskedLM.from_pretrained(model_name)
-    elif model_name in GPT2_MODELS + GPT_NEO_MODELS:
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(model_name)
+    # elif model_name in GPT2_MODELS + GPT_NEO_MODELS:
+    #     tokenizer = AutoTokenizer.from_pretrained(model_name)
+    #     model = AutoModelForCausalLM.from_pretrained(model_name)
     else:
         raise ValueError("Model {model_name} not supported")
 
@@ -41,10 +40,10 @@ def model_type(model_name: str):
         return "bert"
     elif model_name in ROBERTA_MODELS:
         return "roberta"
-    elif model_name in GPT2_MODELS:
-        return "gpt2"
-    elif model_name in GPT_NEO_MODELS:
-        return "gpt_neo"
+    # elif model_name in GPT2_MODELS:
+    #     return "gpt2"
+    # elif model_name in GPT_NEO_MODELS:
+    #     return "gpt_neo"
     else:
         raise ValueError("Model {model_name} not supported")
 
@@ -79,11 +78,11 @@ class KnowledgeNeurons:
             self.output_ff_attr = "output.dense.weight"
             self.word_embeddings_attr = "roberta.embeddings.word_embeddings.weight"
             self.unk_token = getattr(self.tokenizer, "unk_token_id", None)
-        elif "gpt" in model_type:
-            self.transformer_layers_attr = "transformer.h"
-            self.input_ff_attr = "mlp.c_fc"
-            self.output_ff_attr = "mlp.c_proj.weight"
-            self.word_embeddings_attr = "transformer.wpe"
+        # elif "gpt" in model_type:
+        #     self.transformer_layers_attr = "transformer.h"
+        #     self.input_ff_attr = "mlp.c_fc"
+        #     self.output_ff_attr = "mlp.c_proj.weight"
+        #     self.word_embeddings_attr = "transformer.wpe"
         else:
             raise NotImplementedError
 
@@ -109,70 +108,6 @@ class KnowledgeNeurons:
     def _get_transformer_layers(self):
         return get_attributes(self.model, self.transformer_layers_attr)
 
-    def _prepare_inputs(self, prompt, target=None, encoded_input=None):
-        if encoded_input is None:
-            encoded_input = self.tokenizer(prompt, return_tensors="pt").to(self.device)
-        if self.model_type in ["bert", "roberta"]:
-            mask_idx = torch.where(
-                encoded_input["input_ids"][0] == self.tokenizer.mask_token_id
-            )[0].item()
-        else:
-            # with autoregressive models we always want to target the last token
-            mask_idx = -1
-        if target is not None:
-            if "gpt" in self.model_type:
-                target = self.tokenizer.encode(target)
-            else:
-                target = self.tokenizer.convert_tokens_to_ids(target)
-        return encoded_input, mask_idx, target
-
-    def _generate(self, prompt, ground_truth):
-        encoded_input, mask_idx, target_label = self._prepare_inputs(
-            prompt, ground_truth
-        )
-        # for autoregressive models, we might want to generate > 1 token
-        if self.model_type == "gpt":
-            n_sampling_steps = len(target_label)
-        else:
-            n_sampling_steps = 1  # TODO: we might want to use multiple mask tokens even with bert models
-
-        all_gt_probs = []
-        all_argmax_probs = []
-        argmax_tokens = []
-        argmax_completion_str = ""
-
-        for i in range(n_sampling_steps):
-            if i > 0:
-                # retokenize new inputs
-                encoded_input, mask_idx, target_label = self._prepare_inputs(
-                    prompt, ground_truth
-                )
-            outputs = self.model(**encoded_input)
-            probs = F.softmax(outputs.logits[:, mask_idx, :], dim=-1)
-            if n_sampling_steps > 1:
-                target_idx = target_label[i]
-            else:
-                target_idx = target_label
-            gt_prob = probs[:, target_idx].item()
-            all_gt_probs.append(gt_prob)
-
-            # get info about argmax completion
-            argmax_prob, argmax_id = [i.item() for i in probs.max(dim=-1)]
-            argmax_tokens.append(argmax_id)
-            argmax_str = self.tokenizer.decode([argmax_id])
-            all_argmax_probs.append(argmax_prob)
-
-            prompt += argmax_str
-            argmax_completion_str += argmax_str
-
-        gt_prob = math.prod(all_gt_probs) if len(all_gt_probs) > 1 else all_gt_probs[0]
-        argmax_prob = (
-            math.prod(all_argmax_probs)
-            if len(all_argmax_probs) > 1
-            else all_argmax_probs[0]
-        )
-        return gt_prob, argmax_prob, argmax_completion_str, argmax_tokens
-
     def n_layers(self):
         return len(self._get_transformer_layers())
 
@@ -182,25 +117,44 @@ class KnowledgeNeurons:
         else:
             return self.model.config.hidden_size * 4
 
+    def _prepare_inputs(self, prompt, target=None, encoded_input=None):
+        if encoded_input is None:
+            encoded_input = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        if self.model_type == "bert" or self.model_type == "roberta":
+            mask_idxs = torch.where(
+                encoded_input["input_ids"][0] == self.tokenizer.mask_token_id
+            )[0].tolist()
+        else:
+            # TODO: add support for autoregressive LMs (gpt)
+            pass
+        if target is not None:
+            # TODO: add support for autoregressive LMs (gpt)
+            # currently only supports masked LMs (bert, roberta)
+            target = self.tokenizer.convert_tokens_to_ids(
+                self.tokenizer.tokenize(target)
+            )
+        return encoded_input, mask_idxs, target
+
     @staticmethod
     def scaled_input(activations: torch.Tensor, steps: int = 20, device: str = "cpu"):
         """
         Tiles activations along the batch dimension - gradually scaling them over
         `steps` steps from 0 to their original value over the batch dimensions.
+        
         `activations`: torch.Tensor
-        original activations
+            original activations of shape (batch size, time step, dimension)
         `steps`: int
-        number of steps to take
+            number of steps to take
         """
-        tiled_activations = einops.repeat(activations, "b d -> (r b) d", r=steps)
+        tiled_activations = einops.repeat(activations, "b t d -> (r b) t d", r=steps)
         out = (
             tiled_activations
-            * torch.linspace(start=0, end=1, steps=steps).to(device)[:, None]
+            * torch.linspace(start=0, end=1, steps=steps).to(device)[:, None, None]
         )
         return out
 
     def get_baseline_with_activations(
-        self, encoded_input: dict, layer_idx: int, mask_idx: int
+        self, encoded_input: dict, layer_idx: int, mask_idxs: int
     ):
         """
         Gets the baseline outputs and activations for the unmodified model at a given index.
@@ -209,17 +163,17 @@ class KnowledgeNeurons:
         `layer_idx`: int
             which transformer layer to access
         `mask_idx`: int
-            the position at which to get the activations (TODO: rename? with autoregressive models there's no mask, so)
+            the positions at which to get the activations
         """
 
-        def get_activations(model, layer_idx, mask_idx):
+        def get_activations(model, layer_idx, mask_idxs):
             """
-            This hook function should assign the intermediate activations at a given layer / mask idx
+            This hook function should assign the intermediate activations at a given layer / mask idxs
             to the 'self.baseline_activations' variable
             """
 
             def hook_fn(acts):
-                self.baseline_activations = acts[:, mask_idx, :]
+                self.baseline_activations = acts[:, mask_idxs, :]
 
             return register_hook(
                 model,
@@ -229,7 +183,7 @@ class KnowledgeNeurons:
                 ff_attrs=self.input_ff_attr,
             )
 
-        handle = get_activations(self.model, layer_idx=layer_idx, mask_idx=mask_idx)
+        handle = get_activations(self.model, layer_idx=layer_idx, mask_idxs=mask_idxs)
         baseline_outputs = self.model(**encoded_input)
         handle.remove()
         baseline_activations = self.baseline_activations
@@ -267,37 +221,31 @@ class KnowledgeNeurons:
         n_batches = steps // batch_size
 
         # First we take the unmodified model and use a hook to return the baseline intermediate activations at our chosen target layer
-        encoded_input, mask_idx, target_label = self._prepare_inputs(
+        encoded_input, mask_idxs, target_label = self._prepare_inputs(
             prompt, ground_truth, encoded_input
         )
 
-        # for autoregressive models, we might want to generate > 1 token
-        if self.model_type == "gpt":
-            n_sampling_steps = len(target_label)
-        else:
-            n_sampling_steps = 1  # TODO: we might want to use multiple mask tokens even with bert models
+        # TODO: add support for autoregressive LMs (gpt)
+        # we might want to use multiple mask tokens even with bert models
+        n_sampling_steps = 1
 
         if attribution_method == "integrated_grads":
             integrated_grads = []
 
             for i in range(n_sampling_steps):
-                if i > 0 and self.model_type == "gpt":
-                    # retokenize new inputs
-                    encoded_input, mask_idx, target_label = self._prepare_inputs(
-                        prompt, ground_truth
-                    )
                 (
                     baseline_outputs,
                     baseline_activations,
                 ) = self.get_baseline_with_activations(
-                    encoded_input, layer_idx, mask_idx
+                    encoded_input, layer_idx, mask_idxs
                 )
 
-                # for autoregressive models, mask token prediction is same as the next token prediction
-                argmax_mask_token = (
-                    baseline_outputs.logits[:, mask_idx, :].argmax(dim=-1).item()
-                )
-                mask_token_str = self.tokenizer.convert_ids_to_tokens(argmax_mask_token)
+                # greedy decoding model predictions for mask tokens in the sequence
+                # for autoregressive models, mask token is just the last token position indicating next work prediction
+                argmax_mask_token = baseline_outputs.logits[:, mask_idxs, :].argmax(
+                    dim=-1
+                )[0]
+                mask_token_str = self.tokenizer.decode(argmax_mask_token)
 
                 # Now we want to gradually change the intermediate activations of our layer from 0 -> their original value
                 # and calculate the integrated gradient of the masked position at each step
@@ -333,7 +281,7 @@ class KnowledgeNeurons:
                     patch_ff_layer(
                         self.model,
                         layer_idx=layer_idx,
-                        mask_idx=mask_idx,
+                        mask_idxs=mask_idxs,
                         replacement_activations=batch_weights,
                         transformer_layers_attr=self.transformer_layers_attr,
                         ff_attrs=self.input_ff_attr,
@@ -343,13 +291,19 @@ class KnowledgeNeurons:
                     outputs = self.model(**inputs)
 
                     # then calculate the gradients for each step w/r/t the inputs
-                    probs = F.softmax(outputs.logits[:, mask_idx, :], dim=-1)
+                    probs = F.softmax(outputs.logits[:, mask_idxs, :], dim=-1)
+                    # TODO: support autoregressive LMs (GPT)
                     if n_sampling_steps > 1:
-                        target_idx = target_label[i]
+                        pass
                     else:
-                        target_idx = target_label
+                        target_idxs = target_label
                     grad = torch.autograd.grad(
-                        torch.unbind(probs[:, target_idx]), batch_weights
+                        torch.unbind(
+                            torch.prod(
+                                probs[:, range(len(target_idxs)), target_idxs], dim=-1
+                            )
+                        ),
+                        batch_weights,
                     )[0]
                     grad = grad.sum(dim=0)
                     integrated_grads_this_step.append(grad)
@@ -368,8 +322,6 @@ class KnowledgeNeurons:
                 integrated_grads_this_step *= baseline_activations.squeeze(0) / steps
                 integrated_grads.append(integrated_grads_this_step)
 
-                if n_sampling_steps > 1:
-                    prompt += mask_token_str
             integrated_grads = torch.stack(integrated_grads, dim=0).sum(dim=0) / len(
                 integrated_grads
             )
@@ -377,26 +329,21 @@ class KnowledgeNeurons:
         elif attribution_method == "max_activations":
             activations = []
             for i in range(n_sampling_steps):
-                if i > 0 and self.model_type == "gpt":
-                    # retokenize new inputs
-                    encoded_input, mask_idx, target_label = self._prepare_inputs(
-                        prompt, ground_truth
-                    )
                 (
                     baseline_outputs,
                     baseline_activations,
                 ) = self.get_baseline_with_activations(
-                    encoded_input, layer_idx, mask_idx
+                    encoded_input, layer_idx, mask_idxs
                 )
                 activations.append(baseline_activations)
 
-                # for autoregressive models, mask token prediction is same as the next token prediction
-                argmax_mask_token = (
-                    baseline_outputs.logits[:, mask_idx, :].argmax(dim=-1).item()
-                )
-                mask_token_str = self.tokenizer.convert_ids_to_tokens(argmax_mask_token)
-                if n_sampling_steps > 1:
-                    prompt += mask_token_str
+                # greedy decoding model predictions for mask tokens in the sequence
+                # for autoregressive models, mask token is just the last token position indicating next work prediction
+                argmax_mask_token = baseline_outputs.logits[:, mask_idxs, :].argmax(
+                    dim=-1
+                )[0]
+                mask_token_str = self.tokenizer.decode(argmax_mask_token)
+
             activations = torch.stack(activations, dim=0).sum(dim=0) / len(activations)
             return activations.squeeze(0), mask_token_str
         else:
@@ -454,6 +401,7 @@ class KnowledgeNeurons:
         adaptive_threshold: float = None,
         percentile: float = None,
         attribution_method: str = "integrated_grads",
+        aggregation_strategy: str = "start",
         pbar: bool = True,
     ) -> List[List[int]]:
         """
@@ -476,6 +424,8 @@ class KnowledgeNeurons:
             If not None, then we only keep neurons with integrated grads in this percentile of all integrated grads.
         `attribution_method`: str
             the method to use for getting the scores. Choose from 'integrated_grads' or 'max_activations'.
+        `aggregation_strategy`: str
+            the method to use for aggregrating the scores in case of multiple mask tokens. Choose from ['start', 'end', 'sum', 'mean', 'max'].
         """
         attribution_scores, pred_label = self.get_scores(
             prompt,
@@ -488,6 +438,25 @@ class KnowledgeNeurons:
         assert (
             sum(e is not None for e in [threshold, adaptive_threshold, percentile]) == 1
         ), f"Provide one and only one of threshold / adaptive_threshold / percentile"
+        assert aggregation_strategy in [
+            "start",
+            "end",
+            "sum",
+            "mean",
+            "max",
+        ], f"Aggreation strategy {aggregation_strategy} not supported"
+
+        if aggregation_strategy == "start":
+            attribution_scores = attribution_scores[:, 0, :]
+        elif aggregation_strategy == "end":
+            attribution_scores = attribution_scores[:, -1, :]
+        elif aggregation_strategy == "sum":
+            attribution_scores = attribution_scores.sum(dim=1)
+        elif aggregation_strategy == "mean":
+            attribution_scores = attribution_scores.mean(dim=1)
+        elif aggregation_strategy == "max":
+            attribution_scores = attribution_scores.max(dim=1)[0]
+
         if adaptive_threshold is not None:
             threshold = attribution_scores.max().item() * adaptive_threshold
         if threshold is not None:
@@ -515,6 +484,7 @@ class KnowledgeNeurons:
         coarse_adaptive_threshold: Optional[float] = 0.3,
         coarse_threshold: Optional[float] = None,
         coarse_percentile: Optional[float] = None,
+        aggregation_strategy: str = "start",
         quiet=False,
     ) -> List[List[int]]:
         """
@@ -540,6 +510,8 @@ class KnowledgeNeurons:
             threshold for the coarse neurons
         `coarse_percentile`: float
             percentile for the coarse neurons
+        `aggregation_strategy`: str
+            the method to use for aggregrating the scores in case of multiple mask tokens. Choose from ['start', 'end', 'sum', 'mean', 'max'].
         """
         assert isinstance(
             prompts, list

@@ -16,30 +16,35 @@ BATCH_SIZE = 20
 STEPS = 20  # number of steps in the integrated grad calculation
 ADAPTIVE_THRESHOLD = 0.3  # in the paper, they find the threshold value `t` by multiplying the max attribution score by some float - this is that float.
 P = 0.5  # the threshold for the sharing percentage
-LANG = "fr"  # language to probe the LM
+AGGREGATION_STRATEGY = "start"  # aggregation strategy for handling intermediate activations in case of multiple mask tokens
+LANG = "en"  # language to probe the LM
 REL = "P101"  # relation to probe the LM
-
-# load dataset
-# each item in pararel is the same 'fact' (head/relation/tail) expressed in different ways
-mPARAREL = mpararel_expanded()
 
 # setup model & tokenizer
 model, tokenizer = initialize_model_and_tokenizer(MODEL_NAME)
+
+# load dataset
+# each item in pararel is the same 'fact' (head/relation/tail) expressed in different ways
+mPARAREL = mpararel_expanded(tokenizer)
 
 # initialize the knowledge neuron wrapper with your model, tokenizer and a string expressing the type of your model ('gpt2' / 'gpt_neo' / 'bert')
 kn = KnowledgeNeurons(model, tokenizer, model_type=model_type(MODEL_NAME))
 
 
-def get_neurons(fact):
+def get_neurons(fact, verbose=False):
     PROMPTS, GROUND_TRUTH, RELATION_NAME = (
         fact["sentences"],
         fact["obj_label"],
         fact["relation_name"],
     )
-    PROMPTS = [
-        p[0].upper() + p[1:] + "." if not p.endswith(".") else p[0].upper() + p[1:]
-        for p in PROMPTS
-    ]
+    PROMPTS = [p + "." if not p.endswith(".") else p for p in PROMPTS]
+
+    if verbose:
+        print("PROMPTS: ")
+        print("\n".join(PROMPTS))
+        print(f"GT: {GROUND_TRUTH}")
+        print()
+
     refined_neurons, coarse_neurons, prompts_info = kn.get_refined_neurons(
         prompts=PROMPTS,
         ground_truth=GROUND_TRUTH,
@@ -47,9 +52,10 @@ def get_neurons(fact):
         batch_size=BATCH_SIZE,
         steps=STEPS,
         coarse_adaptive_threshold=ADAPTIVE_THRESHOLD,
-        quiet=True,
+        aggregation_strategy=AGGREGATION_STRATEGY,
+        quiet=not verbose,
     )
-    return [prompts_info, coarse_neurons, refined_neurons]
+    return [refined_neurons, coarse_neurons, prompts_info]
 
 
 FACTS = mPARAREL[LANG][REL]

@@ -22,8 +22,8 @@ ROBERTA_MODELS = [
     "xlm-roberta-base", "xlm-roberta-large",
     "facebook/xlm-roberta-xl", "facebook/xlm-roberta-xxl"
 ]
-GPT2_MODELS = ["gpt2"]
-GPT_NEO_MODELS = [
-    "EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B", "EleutherAI/gpt-neo-2.7B"
-]
-ALL_MODELS = BERT_MODELS + ROBERTA_MODELS + GPT2_MODELS + GPT_NEO_MODELS
+# GPT2_MODELS = ["gpt2"]
+# GPT_NEO_MODELS = [
+#     "EleutherAI/gpt-neo-125M", "EleutherAI/gpt-neo-1.3B", "EleutherAI/gpt-neo-2.7B"
+# ]
+ALL_MODELS = BERT_MODELS + ROBERTA_MODELS
