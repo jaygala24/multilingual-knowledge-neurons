@@ -17,7 +17,7 @@ from knowledge_neurons import (
 def main(args):
     RESULTS_DIR = Path(args.results_dir)
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    set_seed.seed(args.seed)
+    set_seed(args.seed)
 
     # load dataset
     # each item in pararel is the same 'fact' (head/relation/tail) expressed in different ways

@@ -1,6 +1,6 @@
 from transformers import AutoTokenizer, AutoModelForMaskedLM, AutoModelForCausalLM
 from .knowledge_neurons import KnowledgeNeurons
-from .data import pararel, pararel_expanded
+from .data import mpararel, mpararel_expanded
 from .constants import LANGUAGES, PARAREL_RELATION_NAMES
 
 BERT_MODELS = [
