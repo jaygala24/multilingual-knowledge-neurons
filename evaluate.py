@@ -45,7 +45,7 @@ def main(args):
                 # ignore if we don't find the same tuple in other language
                 if (
                     uuid
-                    != f"{int_tuple['sub_uri'].lower()}-{int_tuple['obj_uri'].lower()}"
+                    != f"{obs_tuple['sub_uri'].lower()}-{obs_tuple['obj_uri'].lower()}"
                 ):
                     continue
 
@@ -108,7 +108,7 @@ def main(args):
                     ground_truth=int_obj_label,
                     p=args.p,
                     batch_size=args.batch_size,
-                    steps=args.step,
+                    steps=args.steps,
                     coarse_adaptive_threshold=args.adaptive_threshold,
                     quiet=True,
                 )
