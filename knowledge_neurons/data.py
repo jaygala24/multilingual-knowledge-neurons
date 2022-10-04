@@ -6,7 +6,7 @@ from tqdm import tqdm
 from pathlib import Path
 import os
 from transformers import PreTrainedTokenizerBase, AutoTokenizer
-from constants import LANGUAGES, PARAREL_RELATION_NAMES
+from .constants import LANGUAGES, PARAREL_RELATION_NAMES
 
 
 def mpararel(data_path: str = "datasets/mpararel.json"):
@@ -25,24 +25,16 @@ def mpararel(data_path: str = "datasets/mpararel.json"):
                         f"https://raw.githubusercontent.com/coastalcph/mpararel/master/data/mpararel_reviewed/patterns/{lang}/{rel}.jsonl",
                         timeout=None,
                     ) as url:
-                        mPARAREL[lang][rel]["patterns"] = [
-                            json.loads(d.strip())["pattern"]
-                            for d in url.read().decode().split("\n")
-                            if d
-                        ]
+                        mPARAREL[lang][rel]["patterns"] = [json.loads(d.strip())["pattern"] for d in url.read().decode().split("\n") if d]
                 except HTTPError:
                     continue
 
                 try:
                     with urllib.request.urlopen(
-                        f"https://raw.githubusercontent.com/coastalcph/mpararel/master/data/mpararel_reviewed/patterns/{lang}/{rel}.jsonl",
+                        f"https://raw.githubusercontent.com/coastalcph/mpararel/master/data/mpararel_reviewed/tuples/{lang}/{rel}.jsonl",
                         timeout=None,
                     ) as url:
-                        mPARAREL[lang][rel]["vocab"] = [
-                            json.loads(d.strip())
-                            for d in url.read().decode().split("\n")
-                            if d
-                        ]
+                        mPARAREL[lang][rel]["vocab"] = [json.loads(d.strip()) for d in url.read().decode().split("\n") if d]
                 except HTTPError:
                     del mPARAREL[lang][rel]
 
@@ -52,8 +44,7 @@ def mpararel(data_path: str = "datasets/mpararel.json"):
 
 
 def mpararel_expanded(
-    tokenizer: PreTrainedTokenizerBase = None,
-    data_path: str = "datasets/mpararel_expanded.json",
+    tokenizer: PreTrainedTokenizerBase = None, data_path: str = "datasets/mpararel_expanded.json",
 ):
     parent_dir = Path(data_path).parent
     os.makedirs(parent_dir, exist_ok=True)
@@ -62,13 +53,9 @@ def mpararel_expanded(
             return json.load(f)
     else:
         mPARAREL = mpararel()
-        mPARAREL_EXPANDED = collections.defaultdict(
-            lambda: collections.defaultdict(dict)
-        )
+        mPARAREL_EXPANDED = collections.defaultdict(lambda: collections.defaultdict(dict))
         # expand relation templates into sentences
-        for lang, rels in tqdm(
-            mPARAREL.items(), "expanding mpararel dataset into full sentences"
-        ):
+        for lang, rels in tqdm(mPARAREL.items(), "expanding mpararel dataset into full sentences"):
             for rel, value in rels.items():
                 mPARAREL_EXPANDED[lang][rel] = []
                 for vocab in value["vocab"]:
@@ -76,18 +63,10 @@ def mpararel_expanded(
                     for pattern in value["patterns"]:
                         mask_token_count = len(tokenizer.tokenize(vocab["obj_label"]))
                         full_sentences.append(
-                            pattern.replace("[X]", vocab["sub_label"]).replace(
-                                "[Y]",
-                                " ".join([tokenizer.mask_token] * mask_token_count),
-                            )
+                            pattern.replace("[X]", vocab["sub_label"]).replace("[Y]", " ".join([tokenizer.mask_token] * mask_token_count),)
                         )
                     mPARAREL_EXPANDED[lang][rel].append(
-                        {
-                            "sentences": full_sentences,
-                            "sub_label": vocab["sub_label"],
-                            "obj_label": vocab["obj_label"],
-                            "relation_name": rel,
-                        }
+                        {"sentences": full_sentences, "sub_label": vocab["sub_label"], "obj_label": vocab["obj_label"], "relation_name": rel,}
                     )
         with open(data_path, "w") as f:
             json.dump(mPARAREL_EXPANDED, f)
