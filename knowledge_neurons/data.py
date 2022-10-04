@@ -25,7 +25,7 @@ def mpararel(data_path: str = "datasets/mpararel.json"):
                         f"https://raw.githubusercontent.com/coastalcph/mpararel/master/data/mpararel_reviewed/patterns/{lang}/{rel}.jsonl",
                         timeout=None,
                     ) as url:
-                        mPARAREL[lang][rel]["patterns"] = [json.loads(d.strip())["pattern"] for d in url.read().decode().split("\n") if d]
+                        mPARAREL[rel][lang]["patterns"] = [json.loads(d.strip())["pattern"] for d in url.read().decode().split("\n") if d]
                 except HTTPError:
                     continue
 
@@ -34,9 +34,9 @@ def mpararel(data_path: str = "datasets/mpararel.json"):
                         f"https://raw.githubusercontent.com/coastalcph/mpararel/master/data/mpararel_reviewed/tuples/{lang}/{rel}.jsonl",
                         timeout=None,
                     ) as url:
-                        mPARAREL[lang][rel]["vocab"] = [json.loads(d.strip()) for d in url.read().decode().split("\n") if d]
+                        mPARAREL[rel][lang]["vocab"] = [json.loads(d.strip()) for d in url.read().decode().split("\n") if d]
                 except HTTPError:
-                    del mPARAREL[lang][rel]
+                    del mPARAREL[rel][lang]
 
         with open(data_path, "w") as f:
             json.dump(mPARAREL, f)
@@ -57,7 +57,7 @@ def mpararel_expanded(
         # expand relation templates into sentences
         for lang, rels in tqdm(mPARAREL.items(), "expanding mpararel dataset into full sentences"):
             for rel, value in rels.items():
-                mPARAREL_EXPANDED[lang][rel] = []
+                mPARAREL_EXPANDED[rel][lang] = []
                 for vocab in value["vocab"]:
                     full_sentences = []
                     for pattern in value["patterns"]:
@@ -65,7 +65,7 @@ def mpararel_expanded(
                         full_sentences.append(
                             pattern.replace("[X]", vocab["sub_label"]).replace("[Y]", " ".join([tokenizer.mask_token] * mask_token_count),)
                         )
-                    mPARAREL_EXPANDED[lang][rel].append(
+                    mPARAREL_EXPANDED[rel][lang].append(
                         {"sentences": full_sentences, "sub_label": vocab["sub_label"], "obj_label": vocab["obj_label"], "relation_name": rel,}
                     )
         with open(data_path, "w") as f:
