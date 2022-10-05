@@ -30,18 +30,18 @@ def main(args):
     # setup model + tokenizer
     model, tokenizer = initialize_model_and_tokenizer(args.model_name)
     kn = KnowledgeNeurons(model, tokenizer, model_type=model_type(args.model_name))
-
+    
     for rel in PARAREL_RELATION_NAMES:
         print("-" * 50)
         print(f"Probing facts for relation: {rel}")
-        for int_tuple in mPARAREL[rel][args.int_lang]["vocab"]:
+        for int_tuple in mPARAREL.get(rel, {}).get(args.int_lang, {}).get("vocab", []):
             uuid = f"{int_tuple['sub_uri'].lower()}-{int_tuple['obj_uri'].lower()}"
             # currently we're only doing the analysis for single mask tokens
             mask_token_count = len(tokenizer.tokenize(int_tuple["obj_label"]))
             if mask_token_count > 1:
                 continue
 
-            for obs_tuple in mPARAREL[rel][args.obs_lang]["vocab"]:
+            for obs_tuple in mPARAREL.get(rel, {}).get(args.obs_lang, {}).get("vocab", []):
                 # ignore if we don't find the same tuple in other language
                 if (
                     uuid
@@ -54,7 +54,7 @@ def main(args):
                 if mask_token_count > 1:
                     continue
                 
-                print(f"Fact identifier: {uuid}")
+                # print(f"Fact identifier: {uuid}")
 
                 # generate prompts for the facts in the intervened language
                 int_obj_label = int_tuple["obj_label"]
@@ -101,7 +101,7 @@ def main(args):
                     },
                 }
 
-                print(f"Discovering the neurons for the fact")
+                # print(f"Discovering the neurons for the fact")
                 # get the knowledge for the same fact in English
                 neurons = kn.get_refined_neurons(
                     prompts=int_sentences,
@@ -114,7 +114,7 @@ def main(args):
                 )
 
                 for obs_sentence in obs_sentences:
-                    print(f"Suppressing and Enhancing the neurons for the fact")
+                    # print(f"Suppressing and Enhancing the neurons for the fact")
                     # enhance and supress the information at neuron level and evaluate
                     # the effect of same fact elicited in a different language
                     suppression_results, _ = kn.suppress_knowledge(
